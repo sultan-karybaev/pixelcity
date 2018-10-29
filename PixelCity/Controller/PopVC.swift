@@ -8,7 +8,7 @@
 
 import UIKit
 
-class PopVC: UIViewController {
+class PopVC: UIViewController, UIViewControllerTransitioningDelegate {
 
     @IBOutlet weak var popImageView: UIImageView!
     

@@ -30,32 +30,78 @@ class MapVC: UIViewController {
     var flowLayout = UICollectionViewFlowLayout()
     var collectionView: UICollectionView?
     
+    var pinterestLayout = PinterestLayout()
+    
     var imageUrlArray = [String]()
-    var imageArray = [UIImage]()
+    //var imageArray = [UIImage]()
+    var imageArray: [UIImage] = [] {
+        didSet {
+            self.collectionView?.reloadData()
+        }
+    }
+    
+    let transition = PopAnimator()
+    var selectedImage: UIImageView?
     
     override func viewDidLoad() {
         super.viewDidLoad()
         mapView.delegate = self
         locationManager.delegate = self
         configureLocationServices()
-        addDoubleTap()
+        addGesture()
         
-        collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: flowLayout)
+        //layout.sectionInset = UIEdgeInsets(top: 20, left: 0, bottom: 10, right: 0)
+        flowLayout.itemSize = CGSize(width: screenSize.width / 3 - 1, height: (screenSize.width / 3 - 1) / 9 * 16)
+        flowLayout.scrollDirection = .vertical
+        //flowLayout.scroll
+        flowLayout.minimumInteritemSpacing = 1
+        flowLayout.minimumLineSpacing = 1
+        
+        //collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: flowLayout)
+        collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: pinterestLayout)
+        collectionView?.translatesAutoresizingMaskIntoConstraints = false
         collectionView?.register(PhotoCell.self, forCellWithReuseIdentifier: "photoCell")
         collectionView?.delegate = self
         collectionView?.dataSource = self
-        collectionView?.backgroundColor = #colorLiteral(red: 0.9999960065, green: 1, blue: 1, alpha: 1)
+        collectionView?.backgroundColor = #colorLiteral(red: 0, green: 0, blue: 0, alpha: 1)
         
-        registerForPreviewing(with: self, sourceView: collectionView!)
+        let top = NSLayoutConstraint(item: collectionView!, attribute: .top, relatedBy: .equal, toItem: pullUpView, attribute: .top, multiplier: 1, constant: 0)
+        let leading = NSLayoutConstraint(item: collectionView!, attribute: .leading, relatedBy: .equal, toItem: pullUpView, attribute: .leading, multiplier: 1, constant: 0)
+        let trailing = NSLayoutConstraint(item: collectionView!, attribute: .trailing, relatedBy: .equal, toItem: pullUpView, attribute: .trailing, multiplier: 1, constant: 0)
+        let bottom = NSLayoutConstraint(item: collectionView!, attribute: .bottom, relatedBy: .equal, toItem: pullUpView, attribute: .bottom, multiplier: 1, constant: 0)
         
         pullUpView.addSubview(collectionView!)
+        pullUpView.addConstraints([top, leading, trailing, bottom ])
+        pullUpView.layoutIfNeeded()
+        
+        for mapviewview in mapView.subviews {
+            if let gestures = mapviewview.gestureRecognizers {
+                for gest in gestures {
+                    if let g = gest as? UITapGestureRecognizer, g.numberOfTapsRequired == 2 {
+                        g.delegate = self
+                        print(g)
+                    }
+                }
+            }
+        }
+        
+//        registerForPreviewing(with: self, sourceView: collectionView!)
+//
+//        pullUpView.addSubview(collectionView!)
     }
     
-    func addDoubleTap() {
-        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(dropPin(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        doubleTap.delegate = self
-        mapView.addGestureRecognizer(doubleTap)
+    func addGesture() {
+        let singleTapGesture = UITapGestureRecognizer(target: self, action: #selector(animateViewDown))
+        singleTapGesture.numberOfTapsRequired = 1
+        //singleTapGesture.delegate = self
+        mapView.addGestureRecognizer(singleTapGesture)
+        
+        let doubleTapGesture = UITapGestureRecognizer(target: self, action: #selector(dropPin(sender:)))
+        doubleTapGesture.numberOfTapsRequired = 2
+        //doubleTapGesture.delegate = self
+        mapView.addGestureRecognizer(doubleTapGesture)
+        
+        singleTapGesture.require(toFail: doubleTapGesture)
     }
     
     func addSwipe() {
@@ -64,11 +110,17 @@ class MapVC: UIViewController {
         pullUpView.addGestureRecognizer(swipe)
     }
     
-    func animateViewUp() {
+    func animateViewUp(coor: CLLocationCoordinate2D) {
         pullUpViewHeightConstraint.constant = 300
-        UIView.animate(withDuration: 0.3) {
+        UIView.animate(withDuration: 0.3, animations: {
             self.view.layoutIfNeeded()
-        }
+        }, completion: { success in
+            let annotation = DroppablePin(coordinate: coor, identifier: "droppablePin")
+            self.mapView.addAnnotation(annotation)
+            
+            let coordinateRegion = MKCoordinateRegionMakeWithDistance(coor, self.regionRadius * 2, self.regionRadius * 2)
+            self.mapView.setRegion(coordinateRegion, animated: true)
+        })
     }
     
     @objc func animateViewDown() {
@@ -123,7 +175,6 @@ extension MapVC: MKMapViewDelegate {
         if annotation is MKUserLocation {
             return nil
         }
-
         let pinAnnotation = MKPinAnnotationView(annotation: annotation, reuseIdentifier: "droppablePin")
         pinAnnotation.pinTintColor = #colorLiteral(red: 1, green: 0.5763723254, blue: 0, alpha: 1)
         pinAnnotation.animatesDrop = true
@@ -136,7 +187,7 @@ extension MapVC: MKMapViewDelegate {
         mapView.setRegion(coordinateRegion, animated: true)
     }
 
-    @objc func dropPin(_ sender: UITapGestureRecognizer) {
+    @objc func dropPin(sender: UITapGestureRecognizer) {
         removePin()
         removeSpinner()
         removeProgressLabel()
@@ -144,36 +195,54 @@ extension MapVC: MKMapViewDelegate {
 
         imageUrlArray = []
         imageArray = []
-
-        collectionView?.reloadData()
-
-        animateViewUp()
+        
+        let touchPoint = sender.location(in: mapView)
+        let touchCoordinate = mapView.convert(touchPoint, toCoordinateFrom: mapView)
+        
+        let annotation = DroppablePin(coordinate: touchCoordinate, identifier: "droppablePin")
+        if pullUpViewHeightConstraint.constant == 300 {
+            mapView.addAnnotation(annotation)
+            let coordinateRegion = MKCoordinateRegionMakeWithDistance(touchCoordinate, regionRadius * 2, regionRadius * 2)
+            mapView.setRegion(coordinateRegion, animated: true)
+        } else {
+            animateViewUp(coor: touchCoordinate)
+        }
+        
         addSwipe()
         addSpinner()
         addProgressLabel()
+        
+        print(mapView.region.span)
+        let la = mapView.region.span.latitudeDelta
+        let lo = mapView.region.span.longitudeDelta
+        let deltaLatitude = Double(la)
+        let deltaLongitude = Double(lo)
+        let latitudeCircumference = 40075160 * cos(touchCoordinate.latitude * Double.pi / 180)
+        let resultX = deltaLongitude * latitudeCircumference / 360
+        let resultY = deltaLatitude * 40008000 / 360
+        print(resultX, resultY)
+        let zoom = log2(360 * Double(mapView.frame.size.width) / (mapView.region.span.longitudeDelta * 128))
+        print("zoom \(zoom)")
 
-        let touchPoint = sender.location(in: mapView)
-        let touchCoordinate = mapView.convert(touchPoint, toCoordinateFrom: mapView)
-
-        let annotation = DroppablePin(coordinate: touchCoordinate, identifier: "droppablePin")
-        mapView.addAnnotation(annotation)
-
-        //print(flickrURL(forApiKey: FLICKR_KEY, withAnnotation: annotation, andNumberOfPhotos: 40))
-
-        let coordinateRegion = MKCoordinateRegionMakeWithDistance(touchCoordinate, regionRadius * 2, regionRadius * 2)
-        mapView.setRegion(coordinateRegion, animated: true)
-
-        retrieveUrls(forAnnotation: annotation, handler: { bool in
-            if bool {
-                self.retrieveImages(handler: { success in
-                    if success {
-                        self.removeSpinner()
-                        self.removeProgressLabel()
-                        self.collectionView?.reloadData()
+        retrieveUrls(forAnnotation: annotation) { (finished) in
+            if finished {
+                self.removeSpinner()
+                for url in self.imageUrlArray {
+                    DispatchQueue.global().async {
+                        Alamofire.request(url).responseImage(completionHandler: { (response) in
+                            guard let image = response.result.value else { return }
+                            self.imageArray.append(image)
+//                            DispatchQueue.main.async {
+//                                print("collectionView?.reloadData()")
+//                                self.collectionView?.reloadData()
+//                                self.collectionView?.collectionViewLayout.invalidateLayout()
+//                            }
+                        })
                     }
-                })
+                }
+
             }
-        })
+        }
     }
 
     func removePin() {
@@ -183,9 +252,10 @@ extension MapVC: MKMapViewDelegate {
     }
 
     func retrieveUrls(forAnnotation annotation: DroppablePin, handler: @escaping (_ status: Bool) -> ()) {
-        let url = flickrURL(forApiKey: FLICKR_KEY, withAnnotation: annotation, andNumberOfPhotos: 40)
+        let url = flickrURL(forApiKey: FLICKR_KEY, withAnnotation: annotation, andNumberOfPhotos: 39)
         Alamofire.request(url).responseJSON(completionHandler: { response in
             guard let json = response.result.value as? Dictionary<String, AnyObject> else { return }
+            //print(json)
             let photosDict = json["photos"] as! Dictionary<String, AnyObject>
             let photosDistArray = photosDict["photo"] as! [Dictionary<String, AnyObject>]
             for photo in photosDistArray {
@@ -220,12 +290,12 @@ extension MapVC: MKMapViewDelegate {
     }
 
     func cancelAllSessions() {
-        Alamofire.SessionManager.default.session.getTasksWithCompletionHandler({ (sessionDataTask, uploadData, downloadData) in
-            sessionDataTask.forEach({ $0.cancel() })
-            downloadData.forEach({ $0.cancel() })
-        })
+        Alamofire.SessionManager.default.session.getAllTasks { (tasks) in
+            tasks.forEach({$0.cancel()})
+        }
+        imageArray = []
+        imageUrlArray = []
     }
-
 }
 
 extension MapVC: CLLocationManagerDelegate {
@@ -245,7 +315,16 @@ extension MapVC: CLLocationManagerDelegate {
 }
 
 extension MapVC: UIGestureRecognizerDelegate {
-
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return true
+    }
+    
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if let g = gestureRecognizer as? UITapGestureRecognizer, g.numberOfTapsRequired == 2 {
+            return false
+        }
+        return true
+    }
 }
 
 extension MapVC: UICollectionViewDelegate, UICollectionViewDataSource {
@@ -255,24 +334,34 @@ extension MapVC: UICollectionViewDelegate, UICollectionViewDataSource {
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        print(imageArray.count)
-        //print(imageArray)
         return imageArray.count
+    }
+    
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        print("guard \(indexPath.row)")
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "photoCell", for: indexPath) as? PhotoCell else { return UICollectionViewCell() }
-        let imageFromIndex = imageArray[indexPath.row]
-        let imageView = UIImageView(image: imageFromIndex)
+        let imageView = Photo(image: self.imageArray[indexPath.item])
+        imageView.tag = 100
+        let top = NSLayoutConstraint(item: imageView, attribute: .top, relatedBy: .equal, toItem: cell, attribute: .top, multiplier: 1, constant: 0)
+        let leading = NSLayoutConstraint(item: imageView, attribute: .leading, relatedBy: .equal, toItem: cell, attribute: .leading, multiplier: 1, constant: 0)
+        let trailing = NSLayoutConstraint(item: imageView, attribute: .trailing, relatedBy: .equal, toItem: cell, attribute: .trailing, multiplier: 1, constant: 0)
+        let bottom = NSLayoutConstraint(item: imageView, attribute: .bottom, relatedBy: .equal, toItem: cell, attribute: .bottom, multiplier: 1, constant: 0)
         cell.addSubview(imageView)
-        //print(cell)
+        cell.addConstraints([top, leading, trailing, bottom])
+        
         return cell
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        guard let cell = collectionView.cellForItem(at: indexPath) as? PhotoCell else {return}
+        selectedImage = cell.viewWithTag(100) as? UIImageView
+        
         guard let popVC = storyboard?.instantiateViewController(withIdentifier: "PopVC") as? PopVC else { return }
-        popVC.initData(forImag: imageArray[indexPath.row])
+        popVC.initData(forImag: imageArray[indexPath.item])
+        popVC.transitioningDelegate = self
         present(popVC, animated: true, completion: nil)
     }
 
@@ -291,11 +380,21 @@ extension MapVC: UIViewControllerPreviewingDelegate {
     func previewingContext(_ previewingContext: UIViewControllerPreviewing, commit viewControllerToCommit: UIViewController) {
         show(viewControllerToCommit, sender: self)
     }
-    
-    
 }
 
-
+extension MapVC: UIViewControllerTransitioningDelegate {
+    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        transition.originFrame = selectedImage!.superview!.convert(selectedImage!.frame, to: nil)
+        transition.presenting = true
+        selectedImage?.isHidden = true
+        return transition
+    }
+    
+    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        transition.presenting = false
+        return transition
+    }
+}
 
 
 
